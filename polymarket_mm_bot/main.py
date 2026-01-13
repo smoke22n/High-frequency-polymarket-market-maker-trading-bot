@@ -10,6 +10,8 @@ from .api.client import PolymarketRestClient, PolymarketWsClient, Credentials
 from .api.connection_manager import ConnectionManager
 from .config.settings import load_config
 from .market_data.order_book_engine import MarketDataIngestionEngine
+from .strategies.hfmm_strategy import HFMStrategy, OrderBatcher
+from .utils.position_manager import PositionManager
 
 
 async def main():
@@ -54,6 +56,21 @@ async def main():
         ws_url=config.ws_url
     )
 
+    # Initialize position manager
+    from .api.blockchain_client import PolymarketCTFApiClient
+    # Using mock for now - in production this would be a real API client
+    mock_api_client = __import__('unittest.mock').Mock()
+    position_manager = PositionManager(mock_api_client)
+
+    # Initialize the HFMM strategy
+    strategy = HFMStrategy(
+        position_manager=position_manager,
+        target_spread=Decimal('0.0020'),  # 20 bps
+        min_order_size=Decimal('10'),
+        max_order_size=Decimal('1000'),
+        num_levels=5
+    )
+
     # Define market ID to track (this would be a real market ID from Polymarket)
     market_id = "Will Bitcoin hit $100k?"  # Example market ID
 
@@ -64,6 +81,20 @@ async def main():
         best_ask = local_book.get_best_ask()
         if best_bid and best_ask:
             logger.info(f"Best Bid: {best_bid.price} @ {best_bid.size}, Best Ask: {best_ask.price} @ {best_ask.size}")
+
+            # Generate orders based on the updated order book
+            # For demo purposes, we'll just print the suggested orders
+            # In a real implementation, we would place these orders
+            orders = strategy.generate_orders(market_id, local_book)
+            if orders:
+                logger.info(f"Generated {len(orders)} orders for market {market_id}")
+                for order in orders[:3]:  # Print first 3 orders
+                    logger.info(f"  {order.side.upper()} {order.size} @ {order.price}")
+
+                # Batch orders for API submission
+                batcher = OrderBatcher(max_batch_size=10)
+                batches = batcher.batch_orders(orders)
+                logger.info(f"Batches prepared for submission: {len(batches)}")
 
     def on_mid_price_update(mid_price):
         logger.info(f"Mid-price updated: {mid_price}")
@@ -84,6 +115,17 @@ async def main():
         # Subscribe to the market
         market_data_engine.subscribe_to_market(market_id)
         logger.info(f"Subscribed to market: {market_id}")
+
+        # Simulate adding a position to demonstrate the strategy
+        from decimal import Decimal
+        position_manager.track_position(
+            market_id=market_id,
+            yes_balance=Decimal('500'),
+            no_balance=Decimal('300'),
+            collateral_token_address="0x...",
+            condition_id="test_condition"
+        )
+        logger.info("Added sample position for demonstration")
 
         # Keep the bot running
         while True:
