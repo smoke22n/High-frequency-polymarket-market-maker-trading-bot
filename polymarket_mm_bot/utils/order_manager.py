@@ -32,16 +32,18 @@ class OrderManager:
     Manages the lifecycle of orders including placement, tracking, cancellation, and replacement.
     """
 
-    def __init__(self, rest_client: PolymarketRestClient, tick_interval_ms: int = 100):
+    def __init__(self, rest_client: PolymarketRestClient, tick_interval_ms: int = 100, risk_manager=None):
         """
         Initialize the OrderManager.
 
         Args:
             rest_client: Instance of PolymarketRestClient for API interactions
             tick_interval_ms: Interval in milliseconds between ticks (order comparisons/replacements)
+            risk_manager: Optional RiskManager instance for risk checks
         """
         self.rest_client = rest_client
         self.tick_interval_ms = tick_interval_ms
+        self.risk_manager = risk_manager
         self.active_orders: Dict[str, ActiveOrder] = {}  # order_id -> ActiveOrder
         self.market_orders: Dict[str, Set[str]] = {}  # market_id -> set of order_ids
         self.logger = logging.getLogger(__name__)
@@ -73,9 +75,29 @@ class OrderManager:
             return []
 
         placed_orders = []
-        
+
         # Place orders individually to track them properly
         for order in orders:
+            # Perform risk checks if risk manager is available
+            if self.risk_manager:
+                # Get reference price for fat finger check
+                # For now, we'll use the order's current price as a fallback
+                reference_price = order.price
+
+                # Perform risk checks
+                is_safe, violations = self.risk_manager.check_order_risks(
+                    market_id=order.market_id,
+                    order_price=order.price,
+                    reference_price=reference_price
+                )
+
+                if not is_safe:
+                    self.logger.warning(
+                        f"Risk check failed for order in market {order.market_id}, "
+                        f"violations: {', '.join(violations)}. Order rejected."
+                    )
+                    continue  # Skip placing this order
+
             try:
                 # Prepare order parameters for API
                 order_params = {
@@ -89,11 +111,11 @@ class OrderManager:
 
                 # Place the order
                 response = await self.rest_client.place_order(order_params)
-                
+
                 # Check if the order was placed successfully
                 if 'order_id' in response or 'orderId' in response:
                     order_id = response.get('order_id', response.get('orderId'))
-                    
+
                     active_order = ActiveOrder(
                         order_id=order_id,
                         market_id=order.market_id,
@@ -103,23 +125,23 @@ class OrderManager:
                         placed_at=datetime.now(),
                         original_order=order
                     )
-                    
+
                     # Track the order
                     async with self._lock:
                         self.active_orders[order_id] = active_order
                         if order.market_id not in self.market_orders:
                             self.market_orders[order.market_id] = set()
                         self.market_orders[order.market_id].add(order_id)
-                    
+
                     placed_orders.append(active_order)
                     self.logger.info(f"Placed order {order_id} for {order.market_id}: "
                                    f"{order.side.upper()} {order.size} @ {order.price}")
                 else:
                     self.logger.error(f"Failed to place order for {order.market_id}: {response}")
-                    
+
             except Exception as e:
                 self.logger.error(f"Error placing order for {order.market_id}: {str(e)}")
-        
+
         return placed_orders
 
     async def cancel_order(self, order_id: str) -> bool:

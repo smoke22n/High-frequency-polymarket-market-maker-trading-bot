@@ -7,7 +7,7 @@ A high-frequency market maker bot for Polymarket's CLOB (Central Limit Order Boo
 The bot is structured as follows:
 
 - `api/` - Contains API clients for REST and WebSocket connections
-- `utils/` - Utility functions including rate limiting
+- `utils/` - Utility functions including rate limiting and risk management
 - `config/` - Configuration management
 - `models/` - Data models (to be implemented)
 - `strategies/` - Trading strategies (to be implemented)
@@ -19,6 +19,38 @@ The bot is structured as follows:
 - **Connection Manager**: Handles WebSocket heartbeats and auto-reconnects
 - **Rate Limiter**: Ensures compliance with Polymarket's API limits (500 requests/10s)
 - **Authentication**: Secure API authentication using L2 API key and private key
+- **Risk Manager**: Implements safety guardrails to protect capital
+
+## Risk Management
+
+The bot includes a comprehensive Risk Manager module with three key safety features:
+
+### 1. Max Exposure Guard
+- Limits total inventory exposure to $1000 by default
+- Calculates exposure as: (YES + NO tokens) - Hedged sets across all markets
+- Rejects new orders if the exposure threshold would be exceeded
+
+### 2. Kill Switch
+- Monitors account balance losses over rolling 1-hour periods
+- Triggers immediate shutdown if losses exceed 10% of starting balance by default
+- Cancels all active orders and stops the bot when activated
+
+### 3. Fat Finger Protection
+- Prevents orders that deviate more than 5% from reference prices by default
+- Compares against last traded price or best external reference price
+- Protects against erroneous pricing due to market anomalies or bugs
+
+### Configuration
+The risk parameters can be customized during RiskManager initialization:
+```python
+risk_manager = RiskManager(
+    position_manager=position_manager,
+    max_exposure=Decimal('1000'),           # Max $1000 exposure
+    kill_switch_threshold=Decimal('0.10'),  # 10% loss threshold
+    fat_finger_threshold=Decimal('0.05'),   # 5% price deviation
+    starting_balance=Decimal('10000')       # Starting balance assumption
+)
+```
 
 ## Setup
 

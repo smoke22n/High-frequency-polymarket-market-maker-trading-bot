@@ -14,6 +14,7 @@ from .market_data.order_book_engine import MarketDataIngestionEngine
 from .strategies.hfmm_strategy import HFMStrategy, OrderBatcher
 from .utils.position_manager import PositionManager
 from .utils.order_manager import OrderManager
+from .utils.risk_manager import RiskManager
 
 
 async def main():
@@ -64,6 +65,15 @@ async def main():
         mock_api_client = __import__('unittest.mock').Mock()
         position_manager = PositionManager(mock_api_client)
 
+        # Initialize the RiskManager with safety parameters
+        risk_manager = RiskManager(
+            position_manager=position_manager,
+            max_exposure=Decimal('1000'),           # Max $1000 exposure
+            kill_switch_threshold=Decimal('0.10'),  # 10% loss threshold
+            fat_finger_threshold=Decimal('0.05'),   # 5% price deviation
+            starting_balance=Decimal('10000')       # Starting balance assumption
+        )
+
         # Initialize the HFMM strategy
         strategy = HFMStrategy(
             position_manager=position_manager,
@@ -73,8 +83,12 @@ async def main():
             num_levels=5
         )
 
-        # Initialize the OrderManager with a 100ms tick interval
-        order_manager = OrderManager(rest_client=rest_client, tick_interval_ms=100)
+        # Initialize the OrderManager with a 100ms tick interval and risk manager
+        order_manager = OrderManager(
+            rest_client=rest_client,
+            tick_interval_ms=100,
+            risk_manager=risk_manager
+        )
 
         # Define market ID to track (this would be a real market ID from Polymarket)
         market_id = "Will Bitcoin hit $100k?"  # Example market ID
@@ -131,6 +145,12 @@ async def main():
             # Keep the bot running
             while True:
                 await asyncio.sleep(1)
+
+                # Check if the risk manager indicates immediate shutdown
+                if risk_manager.should_shutdown_immediately():
+                    logger.critical("Risk manager triggered immediate shutdown!")
+                    break
+
                 # You can access the current state at any time:
                 current_mid_price = market_data_engine.get_current_mid_price(market_id)
                 current_spread = market_data_engine.get_current_spread(market_id)
